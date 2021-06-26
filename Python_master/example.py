@@ -244,8 +244,16 @@ if __name__ == "__main__":
     ########
     client = Client(port=args.port, baud=args.baud, timeout=0.2)
 
+    # avoid USB communication while Arduino is still in bootloader
+    time.sleep(1.5)
+
     # for convenience
     id = slave=args.id
+
+    ########
+    # assert ModbusControl protocol version. Exit on failure
+    ########
+    client.check_protocol_version(slave=id)
 
     ########
     # read client firmware version

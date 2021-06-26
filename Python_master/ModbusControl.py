@@ -197,12 +197,6 @@ class BaseClient:
                 msg += "  %s" % port.device
             raise ModbusControlError(msg)
 
-        # avoid communication while Arduino is still in bootloader
-        time.sleep(1.5)
-
-        # assert that ModbusControl protocol versions match
-        self._check_protocol_version()
-
         # return Modbus object with COM port configured and protocol versions checked
         return
 
@@ -324,10 +318,10 @@ class BaseClient:
                 self.client.set_timeout(self._timeout)
 
     #########
-    # read client firmware version
+    # check client ModbusControl protocol version
     #########
-    def _check_protocol_version(self, slave=1):
-        """Check client ModbusControl protocol version.
+    def check_protocol_version(self, slave=1):
+        """Check client ModbusControl protocol version against MODBUSCONTROL_PROTOCOL.
         Is performed as read w/o parameters via READ_INPUT_REGISTERS to address 0.
         On error raise exception 'ModbusControlError'
 
@@ -344,7 +338,7 @@ class BaseClient:
         version = str(round(float(result["values"][0]*0.1), 1))
         if version != MODBUSCONTROL_PROTOCOL:
             msg = "ModbusControl protocol version mismatch %s vs. %s" % (MODBUSCONTROL_PROTOCOL, version)
-            logger.error("_check_protocol_version() failed with error: %s" % msg)
+            logger.error("check_protocol_version() failed with error: %s" % msg)
             raise ModbusControlError(msg)
 
 
@@ -372,47 +366,59 @@ if __name__ == "__main__":
     # connect to the Modbus client
     client = BaseClient(port=args.port, baud=args.baud, timeout=0.2)
 
+    # avoid USB communication while Arduino is still in bootloader
+    time.sleep(1.5)
+
+    # assert ModbusControl protocol version. Exit on failure
+    client.check_protocol_version()
+
     # read input register address 0 -> ok
+    print("valid register read -> ", end="", flush=True)
     try:
         status = client._read_values(address=0, num_out=1)
-        print("valid register read -> %s" % (str(status)))
+        print(status, flush=True)
     except ModbusControlError as error:
-        print(error)
+        print(error, flush=True)
 
     # execute valid command with valid parameters (set pin 13) -> ok
+    print("valid command -> ", end="", flush=True)
     try:
         status = client._execute_command(command=0x8001, param_in=[13, 1], num_out=2)
-        print("valid command -> %s" % (str(status)))
+        print(status, flush=True)
     except ModbusControlError as error:
-        print(error)
+        print(error, flush=True)
 
     # print delimiter
     print("------------------------------")
 
     # read 1B from input register address 1000 -> fail
+    print("invalid register address -> ", end="", flush=True)
     try:
         status = client._read_values(address=1000, num_out=1)
-        print(status)
+        print(status, flush=True)
     except ModbusControlError as error:
-        print(error)
+        print(error, flush=True)
 
     # read 1000B input register address 0 -> fail
+    print("invalid register count -> ", end="", flush=True)
     try:
         status = client._read_values(address=0, num_out=1000)
-        print(status)
+        print(status, flush=True)
     except ModbusControlError as error:
-        print(error)
+        print(error, flush=True)
 
-    # execute valid command with valid parameters (set pin 1000) -> fail
+    # execute valid command with invalid parameters (set pin 1000) -> fail
+    print("invalid command parameter -> ", end="", flush=True)
     try:
         status = client._execute_command(command=0x8001, param_in=[1000, 1], num_out=2)
-        print(status)
+        print(status, flush=True)
     except ModbusControlError as error:
-        print(error)
+        print(error, flush=True)
 
     # execute invalid command 0x8FFF -> fail
+    print("invalid command code -> ", end="", flush=True)
     try:
         status = client._execute_command(command=0x8FFF, param_in=[], num_out=2)
-        print(status)
+        print(status, flush=True)
     except ModbusControlError as error:
-        print(error)
+        print(error, flush=True)
