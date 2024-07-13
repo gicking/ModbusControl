@@ -22,8 +22,8 @@
     - Use combination of Modbus commands WRITE_MULTIPLE_HOLDING_REGISTERS and READ_HOLDING_REGISTERS
     - Write to and read from holding register holdReg[] must start at address 0
     - Command code is written to holdReg[0], parameters to holdReg[1..(N-1)]
-    - A pending command is indicated via holdReg[0] bit 15 is set by master
-    - After command completion, holdReg[0] bit 15 is cleared by slave
+    - A pending command is indicated via holdReg[0].b15=1 (set by master)
+    - After command completion, holdReg[0].b15 is cleared by slave
     - After successful command execution, return values are stored in holdReg[1..(N-1)]
     - An error on client side is indicated by setting holdReg[0] bit 14. In this case the error code is stored in holdReg[1]
     - Measured execution time for complete command (=write+read) is ~8.1ms (Debian Linux 18.04 and USB2.0)
@@ -63,10 +63,15 @@
 // High-level command codes. Bit 15 must be 1 (=command pending flag), bit 14 must be cleard (=error flag)
 #define MODBUS_CMD_SET_PIN            0x8001                    //!< Remote command: corresponds to digitalWrite()
 #define MODBUS_CMD_GET_PIN            0x8002                    //!< Remote command: corresponds to digitalRead()
+#define MODBUS_CMD_DELAY              0x8003                    //!< Remote command: corresponds to delay()
+#define MODBUS_CMD_DELAY_NO_ISR       0x8004                    //!< Remote command: wait some time w/ interrupts disabled
 
 // ModbusControl error codes. Stored in holdReg[1] in case of an error
 #define MODBUS_ERROR_ILLEGAL_CMD      -1                        //!< Error code: command not supported
 #define MODBUS_ERROR_ILLEGAL_PARAM    -2                        //!< Error code: illegal parameter value / range
+
+// misc macros
+//#define PIN_DEBUG                     7                         //!< optional pin to indicate command execution. Comment out for none
 
 
 /*-----------------------------------------------------------------------------
@@ -96,6 +101,9 @@ Modbus    modbus_slave(MODBUS_SERIAL, MODBUS_ID, MODBUS_RS485_CTRL_PIN);
 **********/
 uint8_t writeHoldingRegs(uint8_t fc, uint16_t address, uint16_t length)
 {
+  // avoid compiler warnings
+  (void) fc;
+  
   // address range check. Starting address must be 0 (=command code)
   if ((address != 0) || ((address + length) > MODBUS_NUM_HOLD_REG))
     return STATUS_ILLEGAL_DATA_ADDRESS;
@@ -118,6 +126,9 @@ uint8_t writeHoldingRegs(uint8_t fc, uint16_t address, uint16_t length)
 **********/
 uint8_t readHoldingRegs(uint8_t fc, uint16_t address, uint16_t length)
 {
+  // avoid compiler warnings
+  (void) fc;
+  
   // address range check. Starting address must be 0 (=command code)
   if ((address != 0) || ((address + length) > MODBUS_NUM_HOLD_REG))
     return STATUS_ILLEGAL_DATA_ADDRESS;
@@ -139,6 +150,9 @@ uint8_t readHoldingRegs(uint8_t fc, uint16_t address, uint16_t length)
 **********/
 uint8_t readInputReg(uint8_t fc, uint16_t address, uint16_t length)
 {
+  // avoid compiler warnings
+  (void) fc;
+  
   // address range check. Any address within [0; (MODBUS_NUM_INPUT_REG-1)] is allowed
   if ((address > MODBUS_NUM_INPUT_REG) || ((address + length) > MODBUS_NUM_INPUT_REG))
     return STATUS_ILLEGAL_DATA_ADDRESS;
@@ -187,9 +201,15 @@ void init_ModbusControl()
   modbus_slave.begin(MODBUS_BAUDRATE);
 
   // register callback functions when Modbus function code is received
-  modbus_slave.cbVector[CB_READ_INPUT_REGISTERS]    = readInputReg;
-  modbus_slave.cbVector[CB_WRITE_HOLDING_REGISTERS] = writeHoldingRegs;
-  modbus_slave.cbVector[CB_READ_HOLDING_REGISTERS]  = readHoldingRegs;
+  modbus_slave.cbVector[CB_READ_INPUT_REGISTERS]    = (ModbusCallback) readInputReg;
+  modbus_slave.cbVector[CB_WRITE_HOLDING_REGISTERS] = (ModbusCallback) writeHoldingRegs;
+  modbus_slave.cbVector[CB_READ_HOLDING_REGISTERS]  = (ModbusCallback) readHoldingRegs;
+
+  // configure debug pin to indicate command execution (optional)
+  #if defined(PIN_DEBUG)
+    digitalWrite(PIN_DEBUG, LOW);
+    pinMode(PIN_DEBUG, OUTPUT); 
+  #endif // PIN_DEBUG
 
 } // setup()
 
@@ -203,7 +223,7 @@ void init_ModbusControl()
 **********/
 void handle_ModbusControl(void)
 {
-  uint16_t  *cmd  = &(regModbus[0]);
+  uint16_t  *cmd  = &(regModbus[0]);      // for convenience
   
   // handle Modbus low-level protocol
   modbus_slave.poll();
@@ -234,9 +254,9 @@ void handle_ModbusControl(void)
           
         } // parameter check
 
-        // execute command
-        pinMode(regModbus[1], OUTPUT);
+        // execute command. Note order to avoid glitches
         digitalWrite(regModbus[1], regModbus[2]);
+        pinMode(regModbus[1], OUTPUT);
         
         break; // MODBUS_CMD_SET_PIN
 
@@ -268,6 +288,39 @@ void handle_ModbusControl(void)
         
         break; // MODBUS_CMD_GET_PIN
 
+      
+      //////
+      // wait some time
+      //  in:  reg[1]=time[ms]
+      //  out: none
+      //////
+      case MODBUS_CMD_DELAY:
+
+        // execute command
+        delay(regModbus[1]);
+        
+        break; // MODBUS_CMD_DELAY
+
+      
+      //////
+      // wait some time with interrupts disabled
+      //  in:  reg[1]=cycles[1000]
+      //  out: none
+      //////
+      case MODBUS_CMD_DELAY_NO_ISR:
+
+        // execute command
+        cli();
+        //noInterrupts();
+        for (uint32_t i=0; i<regModbus[1]*1000L; i++)
+        {
+          __asm__ __volatile__ ("nop\n\t");
+        }
+        sei();
+        //interrupts();
+        
+        break; // MODBUS_CMD_DELAY_NO_ISR
+
 
       //////
       // unknown command. Don't change!
@@ -284,6 +337,11 @@ void handle_ModbusControl(void)
 
     // command processed -> clear bit 15 in regModbus[0]. Don't change!
     (*cmd) &= 0x7fff;
+
+    // toggle debug pin to indicate command execution (optional)
+    #if defined(PIN_DEBUG)
+      digitalWrite(PIN_DEBUG, !digitalRead(PIN_DEBUG));
+    #endif // PIN_DEBUG
     
   } // command received
 

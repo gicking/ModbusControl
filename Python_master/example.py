@@ -38,8 +38,6 @@ class Client(ModbusControl.BaseClient):
         Name of COM port (string). On error lists available ports
     baud : int
         Communication speed [Baud]. Must be supported by driver
-    slave : int
-        Default Modbus slave id
     timeout : float
         Default Modbus RTU receive timeout [s]
 
@@ -55,13 +53,15 @@ class Client(ModbusControl.BaseClient):
 
     # ModbusControl client input register addresses (only read, no command trigger)
     # Note: address 0 is reserved for ModbusControl protocol version
-    ADDRESS_VERSION = 1                 # Modbus input register address: client firmware version
-    ADDRESS_MILLIS = 2                  # Modbus input register address: time [ms]
+    MODBUS_ADDR_VERSION = 1             # Modbus input register address: client firmware version
+    MODBUS_ADDR_MILLIS = 2              # Modbus input register address: time [ms]
 
     # ModbusControl client commands
     # Note: bit 15 must be 1 (=command pending flag), bit 14 must be cleared (=error flag)
-    COMMAND_SET_PIN = 0x8001            # Remote command: corresponds to digitalWrite(pin, state)
-    COMMAND_GET_PIN = 0x8002            # Remote command: corresponds to digitalRead(pin)
+    MODBUS_CMD_SET_PIN      = 0x8001    # Remote command: corresponds to digitalWrite(pin, state)
+    MODBUS_CMD_GET_PIN      = 0x8002    # Remote command: corresponds to digitalRead(pin)
+    MODBUS_CMD_DELAY        = 0x8003    # Remote command: corresponds to digitalRead(pin)
+    MODBUS_CMD_DELAY_NO_ISR = 0x8004    # Remote command: wait some time w/ interrupts disabled
 
     #########
     # constructor
@@ -92,6 +92,7 @@ class Client(ModbusControl.BaseClient):
         # just call base class constructor here
         ModbusControl.BaseClient.__init__(self, port=port, baud=baud, timeout=timeout)
 
+
     #########
     # read client firmware version
     #########
@@ -115,7 +116,7 @@ class Client(ModbusControl.BaseClient):
         >>> device = example.Client(port="COM6", baud=115200)
         >>> print("firmware: %s" % (str(device.read_version()["version"]))
         """
-        address = Client.ADDRESS_VERSION
+        address = Client.MODBUS_ADDR_VERSION
         num_out = 1
         status = self._read_values(slave=slave, address=address, num_out=num_out)
         logger.info("read_version(): slave %d: read %dB from inputReg address %d -> %s" %
@@ -123,6 +124,7 @@ class Client(ModbusControl.BaseClient):
         major = int(status["values"][0]/10)
         minor = status["values"][0] - 10 * major
         return {"version": {"major": major, "minor": minor}}
+
 
     #########
     # read client uptime
@@ -147,12 +149,13 @@ class Client(ModbusControl.BaseClient):
         >>> device = example.Client(port="COM6", baud=115200)
         >>> print(device.read_uptime()["millis"])
         """
-        address = Client.ADDRESS_MILLIS
+        address = Client.MODBUS_ADDR_MILLIS
         num_out = 1
         status = self._read_values(slave=slave, address=address, num_out=num_out)
         logger.info("slave %d: read_uptime(): read %dB from inputReg address %d -> %s" %
                     (slave, num_out, address, str(status)))
         return {"millis": status["values"][0]}
+
 
     #########
     # set client pin state
@@ -180,9 +183,10 @@ class Client(ModbusControl.BaseClient):
         >>> device = example.Client(port="COM6", baud=115200)
         >>> device.set_pin(pin=13, state=1)
         """
-        status = self._execute_command(slave=slave, command=Client.COMMAND_SET_PIN, param_in=[pin, state], num_out=0)
+        status = self._execute_command(slave=slave, command=Client.MODBUS_CMD_SET_PIN, param_in=[pin, state], num_out=0)
         logger.info("slave %d: set_pin(): set pin %d = %d -> %s" % (slave, pin, state, str(status)))
         return
+
 
     #########
     # read client pin state (application specific)
@@ -209,9 +213,67 @@ class Client(ModbusControl.BaseClient):
         >>> device = example.Client(port="COM6", baud=115200)
         >>> print(device.read_pin(pin=8)["state"])
         """
-        status = self._execute_command(slave=slave, command=Client.COMMAND_GET_PIN, param_in=[pin], num_out=2)
+        status = self._execute_command(slave=slave, command=Client.MODBUS_CMD_GET_PIN, param_in=[pin], num_out=2)
         logger.info("slave %d: read_pin(): read pin %d -> %s" % (slave, pin, str(status)))
         return {"state": status["values"][1]}
+
+
+    #########
+    # wait time [ms] (application specific)
+    #########
+    def delay(self, slave=1, time=None):
+        """Wait some time [ms]. Corresponds to Arduino delay().
+        Is performed via WRITE_MULTIPLE_HOLDING_REGISTERS and READ_HOLDING_REGISTERS.
+
+        Parameters
+        ----------
+        slave : int
+            Modbus slave identifier
+        time : int
+            time to wait [ms]
+
+        Returns
+        -------
+        nothing
+
+        Examples
+        --------
+        >>> import example
+        >>> device = example.Client(port="COM6", baud=115200)
+        >>> device.delay(time=100)
+        """
+        status = self._execute_command(slave=slave, command=Client.MODBUS_CMD_DELAY, param_in=[time], num_out=0)
+        logger.info("slave %d: delay(): delay %d ms -> %s" % (slave, time, str(status)))
+        return
+
+
+    #########
+    # wait some time with interrupts disabled (application specific)
+    #########
+    def delay_no_interrupts(self, slave=1, cycles=None):
+        """Wait some time with interrupts disabled.
+        Is performed via WRITE_MULTIPLE_HOLDING_REGISTERS and READ_HOLDING_REGISTERS.
+
+        Parameters
+        ----------
+        slave : int
+            Modbus slave identifier
+        cycles : int
+            number of cycles to wait [1000]
+
+        Returns
+        -------
+        nothing
+
+        Examples
+        --------
+        >>> import example
+        >>> device = example.Client(port="COM6", baud=115200)
+        >>> device.delay_no_interrupts(cycles=300)
+        """
+        status = self._execute_command(slave=slave, command=Client.MODBUS_CMD_DELAY_NO_ISR, param_in=[cycles], num_out=0)
+        logger.info("slave %d: delay_no_interrupts(): delay_no_interrupts %g cycles -> %s" % (slave, float(cycles*1000), str(status)))
+        return
 
 
 ####################################################################
@@ -242,10 +304,10 @@ if __name__ == "__main__":
     ########
     # connect to the Modbus client
     ########
-    client = Client(port=args.port, baud=args.baud, timeout=0.2)
+    client = Client(port=args.port, baud=args.baud, timeout=2)
 
     # avoid USB communication while Arduino is still in bootloader
-    time.sleep(1.5)
+    time.sleep(2)
 
     # for convenience
     id = slave=args.id
@@ -259,20 +321,27 @@ if __name__ == "__main__":
     # read client firmware version
     ########
     version = client.read_version(slave=id)["version"]
-    print("client ID=%d SW version v%d.%d\n" % (args.id, version["major"], version["minor"]))
-    time.sleep(1.5)
+    print("client ID=%d SW version v%d.%d\n" % (id, version["major"], version["minor"]))
+
 
     ########
     # main loop
     ########
     output_state = True
+    time_start = time.time()    # [s]
     while True:
 
         ########
-        # get client uptime [ms]
+        # print PC runtime [s]
+        ########
+        time_curr = time.time()
+        print("runtime %1.1f s" % (time_curr - time_start))
+
+        ########
+        # get client uptime (impacted if ISR disabled) [ms]
         ########
         millis = client.read_uptime(slave=id)["millis"]
-        print("uptime %1.1f s" % (round(millis * 0.001, 1)))
+        print("slave uptime %1.1f s" % (millis * 0.001))
 
         ########
         # toggle LED pin (=13)
@@ -290,8 +359,19 @@ if __name__ == "__main__":
         print("read pin %d : %d" % (input_pin, input_state))
 
         ########
-        # wait some time [s]
+        # wait some time (with or w/o interrupts)
+        ########
+        if True:
+            pause = 1000  # ms
+            print("delay %1.1fs" % (pause / 1000.0))
+            client.delay(slave=id, time=pause)
+        else:
+            cycles = 1000   # 1000*NOP
+            print("halt %g cycles" % (cycles*1000))
+            client.delay_no_interrupts(slave=id, cycles=cycles)
+
+        ########
+        # indicate new loop
         ########
         sys.stdout.write("\n")
         sys.stdout.flush()
-        time.sleep(1)
