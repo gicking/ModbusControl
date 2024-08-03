@@ -64,7 +64,7 @@
 #define MODBUS_CMD_SET_PIN            0x8001                    //!< Remote command: corresponds to digitalWrite()
 #define MODBUS_CMD_GET_PIN            0x8002                    //!< Remote command: corresponds to digitalRead()
 #define MODBUS_CMD_DELAY              0x8003                    //!< Remote command: corresponds to delay()
-#define MODBUS_CMD_DELAY_NO_ISR       0x8004                    //!< Remote command: wait some time w/ interrupts disabled
+#define MODBUS_CMD_DELAY_STALL        0x8004                    //!< Remote command: corresponds to delay() w/o UART buffering
 
 // ModbusControl error codes. Stored in holdReg[1] in case of an error
 #define MODBUS_ERROR_ILLEGAL_CMD      -1                        //!< Error code: command not supported
@@ -303,25 +303,25 @@ void handle_ModbusControl(void)
 
       
       //////
-      // wait some time with interrupts disabled
-      //  in:  reg[1]=cycles[1000]
+      // wait some time with Serial disabled
+      //  in:  reg[1]=time[ms]
       //  out: none
       //////
-      case MODBUS_CMD_DELAY_NO_ISR:
+      case MODBUS_CMD_DELAY_NO_SERIAL:
 
-        // execute command
-        cli();
-        //noInterrupts();
-        for (uint32_t i=0; i<regModbus[1]*1000L; i++)
-        {
-          __asm__ __volatile__ ("nop\n\t");
-        }
-        sei();
-        //interrupts();
+        // disable Modbus interface
+        MODBUS_SERIAL.end();
         
-        break; // MODBUS_CMD_DELAY_NO_ISR
+        // execute command
+        delay(regModbus[1]);
 
-
+        // re-enable Modbus interface
+        MODBUS_SERIAL.begin(MODBUS_BAUDRATE);
+        while(!MODBUS_SERIAL);
+        
+        break; // MODBUS_CMD_DELAY_NO_SERIAL
+      
+      
       //////
       // unknown command. Don't change!
       //////
