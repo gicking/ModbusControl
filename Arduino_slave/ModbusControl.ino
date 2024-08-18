@@ -64,7 +64,7 @@
 #define MODBUS_CMD_SET_PIN            0x8001                    //!< Remote command: corresponds to digitalWrite()
 #define MODBUS_CMD_GET_PIN            0x8002                    //!< Remote command: corresponds to digitalRead()
 #define MODBUS_CMD_DELAY              0x8003                    //!< Remote command: corresponds to delay()
-#define MODBUS_CMD_DELAY_STALL        0x8004                    //!< Remote command: corresponds to delay() w/o UART buffering
+#define MODBUS_CMD_DELAY_NOSERIAL     0x8004                    //!< Remote command: corresponds to delay() w/o UART buffering
 
 // ModbusControl error codes. Stored in holdReg[1] in case of an error
 #define MODBUS_ERROR_ILLEGAL_CMD      -1                        //!< Error code: command not supported
@@ -307,7 +307,7 @@ void handle_ModbusControl(void)
       //  in:  reg[1]=time[ms]
       //  out: none
       //////
-      case MODBUS_CMD_DELAY_NO_SERIAL:
+      case MODBUS_CMD_DELAY_NOSERIAL:
 
         // disable Modbus interface
         MODBUS_SERIAL.end();

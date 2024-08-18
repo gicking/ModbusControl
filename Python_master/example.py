@@ -23,6 +23,7 @@ Class
 # IMPORT REQUIRED MODULES
 ###########
 import ModbusControl
+import inspect
 import logging
 logger = logging.getLogger(__name__)
 
@@ -38,8 +39,10 @@ class Client(ModbusControl.BaseClient):
         Name of COM port (string). On error lists available ports
     baud : int
         Communication speed [Baud]. Must be supported by driver
-    timeout : float
+    timeout_modbus : float
         Default Modbus RTU receive timeout [s]
+    timeout_command : float
+        Default command execution timeout [s]
 
     Returns
     -------
@@ -58,16 +61,17 @@ class Client(ModbusControl.BaseClient):
 
     # ModbusControl client commands
     # Note: bit 15 must be 1 (=command pending flag), bit 14 must be cleared (=error flag)
-    MODBUS_CMD_SET_PIN      = 0x8001        # Remote command: corresponds to digitalWrite(pin, state)
-    MODBUS_CMD_GET_PIN      = 0x8002        # Remote command: corresponds to digitalRead(pin)
-    MODBUS_CMD_DELAY        = 0x8003        # Remote command: corresponds to delay(ms)
-    MODBUS_CMD_DELAY_STALL  = 0x8004        # Remote command: corresponds to delay() w/o UART buffering
+    MODBUS_CMD_SET_PIN          = 0x8001        # Remote command: corresponds to digitalWrite(pin, state)
+    MODBUS_CMD_GET_PIN          = 0x8002        # Remote command: corresponds to digitalRead(pin)
+    MODBUS_CMD_DELAY            = 0x8003        # Remote command: corresponds to delay(ms)
+    MODBUS_CMD_DELAY_NOSERIAL   = 0x8004        # Remote command: corresponds to delay() w/o UART buffering
 
 
     #########
     # constructor
     #########
-    def __init__(self, port="/dev/ttyUSB0", baud=115200, timeout_modbus=0.2, timeout_command=0.2):
+    def __init__(self, port: str = "/dev/ttyUSB0", baud: int = 115200, timeout_modbus: float = 0.1,
+                 timeout_command: float = 0.2):
         """
         Create an object to control an Arduino via ModbusControl protocol.
 
@@ -79,6 +83,8 @@ class Client(ModbusControl.BaseClient):
             Communication speed [Baud]. Must be supported by driver
         timeout_modbus : float
             Default Modbus RTU receive timeout [s]
+        timeout_command : float
+            Default command execution timeout [s]
 
         Returns
         -------
@@ -98,7 +104,7 @@ class Client(ModbusControl.BaseClient):
     #########
     # read client firmware version
     #########
-    def read_version(self, slave=1):
+    def read_version(self, slave: int = 1) -> dict:
         """Read client software version.
         Is performed as read w/o parameters via READ_INPUT_REGISTERS.
 
@@ -118,20 +124,20 @@ class Client(ModbusControl.BaseClient):
         >>> device = example.Client(port="COM6", baud=115200)
         >>> print("firmware: %s" % (str(device.read_version()["version"]))
         """
-        address = Client.MODBUS_ADDR_VERSION
-        num_out = 1
-        status = self.read_values(slave=slave, address=address, num_out=num_out)
-        logger.info("read_version(): slave %d: read %dB from inputReg address %d -> %s" %
-                    (slave, num_out, address, str(status)))
-        major = int(status["values"][0]/10)
-        minor = status["values"][0] - 10 * major
-        return {"version": {"major": major, "minor": minor}}
+        _address = Client.MODBUS_ADDR_VERSION
+        _num_out = 1
+        _status = self.read_values(slave=slave, address=_address, num_out=_num_out)
+        logger.info("%s(): slave %d: read %dB from inputReg address %d -> %s" %
+                    (inspect.stack()[0].function, slave, _num_out, _address, str(_status)))
+        _major = int(_status["values"][0]/10)
+        _minor = _status["values"][0] - 10 * _major
+        return {"version": {"major": _major, "minor": _minor}}
 
 
     #########
     # read client uptime
     #########
-    def read_uptime(self, slave=1):
+    def read_uptime(self, slave: int = 1) -> dict:
         """Read client uptime [ms]. Corresponds to Arduino millis().
         Is performed as read w/o parameters via READ_INPUT_REGISTERS.
 
@@ -151,18 +157,18 @@ class Client(ModbusControl.BaseClient):
         >>> device = example.Client(port="COM6", baud=115200)
         >>> print(device.read_uptime()["millis"])
         """
-        address = Client.MODBUS_ADDR_MILLIS
-        num_out = 1
-        status = self.read_values(slave=slave, address=address, num_out=num_out)
-        logger.info("slave %d: read_uptime(): read %dB from inputReg address %d -> %s" %
-                    (slave, num_out, address, str(status)))
-        return {"millis": status["values"][0]}
+        _address = Client.MODBUS_ADDR_MILLIS
+        _num_out = 1
+        _status = self.read_values(slave=slave, address=_address, num_out=_num_out)
+        logger.info("%s(): slave %d: read %dB from inputReg address %d -> %s" %
+                    (inspect.stack()[0].function, slave, _num_out, _address, str(_status)))
+        return {"millis": _status["values"][0]}
 
 
     #########
     # set client pin state
     #########
-    def set_pin(self, slave=1, pin=None, state=None):
+    def set_pin(self, slave: int = 1, pin: int = None, state: int = None):
         """Set pin state. Corresponds to Arduino digitalWrite().
         Is performed via WRITE_MULTIPLE_HOLDING_REGISTERS and READ_HOLDING_REGISTERS.
 
@@ -173,7 +179,7 @@ class Client(ModbusControl.BaseClient):
         pin : int
             pin number
         state : int
-            pin state (1=on, 0=off)
+            pin state (1=high, 0=low)
 
         Returns
         -------
@@ -183,17 +189,18 @@ class Client(ModbusControl.BaseClient):
         --------
         >>> import example
         >>> device = example.Client(port="COM6", baud=115200)
-        >>> device.set_pin(pin=13, state=1)
+        >>> device.set_pin(pin=13, state=True)
         """
-        status = self.execute_command(slave=slave, command=Client.MODBUS_CMD_SET_PIN, param_in=[pin, state], num_out=0)
-        logger.info("slave %d: set_pin(): set pin %d = %d -> %s" % (slave, pin, state, str(status)))
+        _status = self.execute_command(slave=slave, command=Client.MODBUS_CMD_SET_PIN, param_in=[pin, state], num_out=0)
+        logger.info("%s(): slave %d set pin %d = %d -> %s" %
+                    (inspect.stack()[0].function, slave, pin, state, str(_status)))
         return
 
 
     #########
     # read client pin state (application specific)
     #########
-    def read_pin(self, slave=1, pin=None):
+    def read_pin(self, slave: int = 1, pin: int = None) -> dict:
         """Read pin state. Corresponds to Arduino digitalRead().
         Is performed via WRITE_MULTIPLE_HOLDING_REGISTERS and READ_HOLDING_REGISTERS.
 
@@ -215,15 +222,15 @@ class Client(ModbusControl.BaseClient):
         >>> device = example.Client(port="COM6", baud=115200)
         >>> print(device.read_pin(pin=8)["state"])
         """
-        status = self.execute_command(slave=slave, command=Client.MODBUS_CMD_GET_PIN, param_in=[pin], num_out=2)
-        logger.info("slave %d: read_pin(): read pin %d -> %s" % (slave, pin, str(status)))
-        return {"state": status["values"][1]}
+        _status = self.execute_command(slave=slave, command=Client.MODBUS_CMD_GET_PIN, param_in=[pin], num_out=2)
+        logger.info("%s(): slave %d: read pin %d -> %s" % (inspect.stack()[0].function, slave, pin, str(_status)))
+        return {"state": _status["values"][1]}
 
 
     #########
     # wait time [ms] (application specific)
     #########
-    def delay(self, slave=1, time=None):
+    def delay(self, slave: int = 1, millis: int = None):
         """Wait some time [ms]. Corresponds to Arduino delay().
         Is performed via WRITE_MULTIPLE_HOLDING_REGISTERS and READ_HOLDING_REGISTERS.
 
@@ -231,7 +238,7 @@ class Client(ModbusControl.BaseClient):
         ----------
         slave : int
             Modbus slave identifier
-        time : int
+        millis : int
             time to wait [ms]
 
         Returns
@@ -242,22 +249,23 @@ class Client(ModbusControl.BaseClient):
         --------
         >>> import example
         >>> device = example.Client(port="COM6", baud=115200)
-        >>> device.delay(time=100)
+        >>> device.delay(millis=100)
         """
-        # set appropriate command timeout
-        _timeout_command = time / 1000 + 0.1
+        # set appropriate modbus and command timeout [s]
+        _timeout_modbus = millis / 1000 + 0.01
+        _timeout_command = millis / 1000 + 0.1
 
         # execute command
-        status = self.execute_command(slave=slave, command=Client.MODBUS_CMD_DELAY, timeout_command=_timeout_command,
-                                      param_in=[time], num_out=0)
-        logger.info("slave %d: delay(): delay %d ms -> %s" % (slave, time, str(status)))
+        _status = self.execute_command(slave=slave, command=Client.MODBUS_CMD_DELAY, timeout_modbus=_timeout_modbus,
+                                       timeout_command=_timeout_command, param_in=[millis], num_out=0)
+        logger.info("%s(): slave %d: delay %d ms -> %s" % (inspect.stack()[0].function, slave, millis, str(_status)))
         return
 
 
     #########
     # wait time [ms] without Modbus handling (application specific)
     #########
-    def delay_no_serial(self, slave=1, time=None):
+    def delay_no_serial(self, slave: int = 1, millis: int = None):
         """Wait some time [ms] without Modbus handling. Corresponds to Arduino delay(),
         but Modbus is not handled.
         Is performed via WRITE_MULTIPLE_HOLDING_REGISTERS and READ_HOLDING_REGISTERS.
@@ -266,7 +274,7 @@ class Client(ModbusControl.BaseClient):
         ----------
         slave : int
             Modbus slave identifier
-        time : int
+        millis : int
             time to wait [ms]
 
         Returns
@@ -277,16 +285,19 @@ class Client(ModbusControl.BaseClient):
         --------
         >>> import example
         >>> device = example.Client(port="COM6", baud=115200)
-        >>> device.delay_no_serial(time=100)
+        >>> device.delay_no_serial(millis=100)
         """
 
-        # set appropriate command timeout
-        _timeout_command = time/1000+0.1
+        # set appropriate command timeout [s]
+        _timeout_modbus = millis / 1000 + 0.01
+        _timeout_command = millis / 1000 + 0.1
 
         # execute command
-        status = self.execute_command(slave=slave, command=Client.MODBUS_CMD_DELAY_STALL,
-                                      timeout_command=_timeout_command, param_in=[time], num_out=0)
-        logger.info("slave %d: delay_no_serial(): delay %d ms w/o UART handling -> %s" % (slave, time, str(status)))
+        _status = self.execute_command(slave=slave, command=Client.MODBUS_CMD_DELAY_NOSERIAL,
+                                       timeout_modbus=_timeout_modbus, timeout_command=_timeout_command,
+                                       param_in=[millis], num_out=0)
+        logger.info("%s(): slave %d: delay %d ms w/o UART handling -> %s" %
+                    (inspect.stack()[0].function, slave, millis, str(_status)))
         return
 
 
@@ -381,14 +392,14 @@ if __name__ == "__main__":
         ########
         pause = 1000  # ms
         print("delay %1.1fs with serial interrupts" % (pause / 1000.0))
-        client.delay(slave=args.id, time=pause)
+        client.delay(slave=args.id, millis=pause)
 
         ########
         # wait some time (without serial interrupts)
         ########
         pause = 1000  # ms
         print("delay %1.1fs without serial interrupts" % (pause / 1000.0))
-        client.delay_no_serial(slave=args.id, time=pause)
+        client.delay_no_serial(slave=args.id, millis=pause)
 
         ########
         # indicate new loop

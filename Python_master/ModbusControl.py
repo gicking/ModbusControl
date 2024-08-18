@@ -208,7 +208,8 @@ class BaseClient:
     #########
     # Read an input register from ModbusControl client (don't modify)
     #########
-    def read_values(self, slave: int = 1, address: int = None, num_out: int = None) -> dict:
+    def read_values(self, slave: int = 1, address: int = None, num_out: int = None, 
+                    timeout_modbus: float = None, timeout_command: float = None) -> dict:
         """Read the content of a Modbus RTU client input register via READ_INPUT_REGISTERS.
 
         Parameters
@@ -219,6 +220,10 @@ class BaseClient:
             index in the client input register
         num_out : int
             number of values to read
+        timeout_modbus : float
+           Modbus RTU receive timeout [s]
+        timeout_command : float
+           command execution timeout [s]
 
         Returns
         -------
@@ -226,28 +231,46 @@ class BaseClient:
             "values": list of returned values (int16)
         """
 
-        # read input register. On error raise exception 'ModbusControlError'
-        try:
+        # Set Modbus receive timeout [s]. Required for long command execution times
+        if timeout_modbus is not None:
+            self.client.set_timeout(timeout_modbus)
 
-            # read input register
-            _reg = self.client.execute(slave=slave, function_code=modbus_defines.READ_INPUT_REGISTERS,
-                                       starting_address=address, quantity_of_x=num_out)
-            logger.info("slave %d: read %dB from inputReg address %d -> %s" % (slave, num_out, address, str(_reg)))
+        # Set command timeout and start timeout. Is required for long command execution times
+        _timeout_command = timeout_command if timeout_command is not None else self._timeout_command
+        _start_time = time.time()
 
-            # return result
-            return {"values": _reg}
+        # Retry loop for READ_INPUT_REGISTERS with timeout
+        while True:
 
-        # handle low-level Modbus errors
-        # noinspection PyUnresolvedReferences
-        except modbus.ModbusError as _err:
-            _error_code = _err.get_exception_code()
-            _msg = ("%s() failed with error: %s" % (inspect.stack()[0].function, ModbusStatus(_error_code).name))
-            logger.error(_msg)
-            raise ModbusControlError(_msg)
-        except BaseException as _err:
-            _msg = "%s() failed with error: %s" % (inspect.stack()[0].function, str(_err))
-            logger.error(_msg)
-            raise ModbusControlError(_msg)
+            try:
+                # read input register
+                _reg = self.client.execute(slave=slave, function_code=modbus_defines.READ_INPUT_REGISTERS,
+                                           starting_address=address, quantity_of_x=num_out)
+                logger.info("slave %d: read %dB from inputReg address %d -> %s" % (slave, num_out, address, str(_reg)))
+
+                # Restore Modbus timeout
+                if timeout_modbus is not None:
+                    self.client.set_timeout(self._timeout_modbus)
+
+                # return result
+                return {"values": _reg}
+
+            # check for acknowledge timeout
+            # noinspection PyUnresolvedReferences
+            except (modbus.ModbusError, ModbusInvalidResponseError, BaseException) as _err:
+                if type(_err) == modbus.ModbusError:
+                    _err = ModbusStatus(_err.get_exception_code()).name
+                if time.time() - _start_time < _timeout_command:
+                    logger.warning("%s(): Read failed (%s), retry" % 
+                                   (inspect.stack()[0].function, str(_err)))
+                    time.sleep(0.05)  # Short delay before retrying
+                else:
+                    _msg = "%s(): Read timeout after %1.1fs (%s), abort" % \
+                        (inspect.stack()[0].function, (time.time()-_start_time), str(_err))
+                    logger.error(_msg)
+                    if timeout_modbus is not None:
+                        self.client.set_timeout(self._timeout_modbus)            
+                    raise ModbusControlError(_msg)
 
 
     #########
@@ -279,90 +302,105 @@ class BaseClient:
             "values": list of returned parameters (int16)
         """
 
-        try:
+        # Set Modbus receive timeout [s]. Required for long command execution times
+        if timeout_modbus is not None:
+            self.client.set_timeout(timeout_modbus)
 
-            # Set Modbus receive timeout [s]. Required for long command execution times
-            if timeout_modbus is not None:
-                self.client.set_timeout(timeout_modbus)
+        # Set command timeout and start timeout. Is required for long command execution times
+        _timeout_command = timeout_command if timeout_command is not None else self._timeout_command
+        _start_time = time.time()
 
-            # Set command timeout. Required for long command execution times
-            _timeout_command = timeout_command if timeout_command is not None else self._timeout_command
+        # Retry loop for WRITE_MULTIPLE_REGISTERS with timeout
+        while True:
 
-            # Write command (in reg[0]) with parameters (in reg[1..N])
-            self.client.execute(slave=slave, function_code=modbus_defines.WRITE_MULTIPLE_REGISTERS,
-                                starting_address=0, output_value=[command] + param_in)
-            logger.info("slave %d: write %s to holdReg address 0" % (slave, str([hex(command)] + param_in)))
+            try:
+                # Write command (in reg[0]) with parameters (in reg[1..N])
+                self.client.execute(slave=slave, function_code=modbus_defines.WRITE_MULTIPLE_REGISTERS,
+                                    starting_address=0, output_value=[command] + param_in)
+                logger.info("slave %d: write %s to holdReg address 0" % (slave, str([hex(command)] + param_in)))
+                
+                # exit loop if write was successful (=no exception)
+                break
 
-            # Read until command is completed: reg[0] bit15 = 0
-            _return = None
-            _reg = None
-            _start_time = time.time()
-            while True:
-
-                try:
-                    # Read holding registers
-                    _reg = self.client.execute(slave=slave, function_code=modbus_defines.READ_HOLDING_REGISTERS,
-                                               starting_address=0, quantity_of_x=max(1 + num_out, 2))
-                    logger.info("slave %d: read %dB from holdReg address 0 -> %s" %
-                                (slave, max(1 + num_out, 2), _reg))
-
-                    # Check if the response length is valid
-                    if len(_reg) < 1:
-                        logger.warning("Invalid response length: %d. Expected at least 1" % len(_reg))
-                        raise ModbusInvalidResponseError("Response length is invalid %d" % len(_reg))
-
-                    # Check if reg[0] bit15 = 0
-                    _return = _reg[0]
-                    if _return & 0x8000 == 0:
-                        break
-
-                # check for command timeout
-                except ModbusInvalidResponseError as _err:
-                    logger.warning("Invalid response length or no response: %s" % str(_err))
-                    if time.time() - _start_time > _timeout_command:
-                        logger.error("Command timeout after %1.1fs" % (time.time() - _start_time))
-                        raise ModbusControlError(f"Command timeout after %1.1fs" % (time.time() - _start_time))
+            # check for acknowledge timeout
+            except (modbus.ModbusError, ModbusInvalidResponseError, BaseException) as _err:
+                if type(_err) == modbus.ModbusError:
+                    _err = ModbusStatus(_err.get_exception_code()).name
+                if time.time() - _start_time < _timeout_command:
+                    logger.warning("%s(): Command request failed (%s), retry" % 
+                                   (inspect.stack()[0].function, str(_err)))
                     time.sleep(0.05)  # Short delay before retrying
-                    continue
-                except modbus.ModbusError as _err:
-                    logger.warning("Read attempt failed: %s" % str(_err))
-                    if time.time() - _start_time > _timeout_command:
-                        logger.error("Command timeout after %1.1fs" % (time.time() - _start_time))
-                        raise ModbusControlError(f"Command timeout after %1.1fs" % (time.time() - _start_time))
-                    time.sleep(0.05)
+                else:
+                    _msg = "%s(): Command request timeout after %1.1fs (%s), abort" % \
+                        (inspect.stack()[0].function, (time.time()-_start_time), str(_err))
+                    logger.error(_msg)
+                    if timeout_modbus is not None:
+                        self.client.set_timeout(self._timeout_modbus)            
+                    raise ModbusControlError(_msg)
 
-            # Check for high-level error: reg[0] bit14 = 1, error code in reg[1]
-            if _return & 0x4000 != 0:
-                if len(_reg) < 2:
-                    logger.error("Expected error code in response but response length is too short.")
-                    raise ModbusControlError("Response too short to contain error code.")
-                _err = _reg[1]
-                if _err > 2 ** 15:  # Convert to uint16_t to int16_t
-                    _err = -(2 ** 16 - _err)
-                msg = "_execute_command() failed with error: %s" % ModbusControlStatus(_err)
-                logger.error(msg)
-                raise ModbusControlError(msg)
 
-            # Restore Modbus timeout
+        # Read until command is completed (reg[0] bit15 = 0) or timeout
+        _return = None
+        _reg = None
+        while True:
+
+            try:
+                # Read holding registers
+                _reg = self.client.execute(slave=slave, function_code=modbus_defines.READ_HOLDING_REGISTERS,
+                                            starting_address=0, quantity_of_x=max(1 + num_out, 2))
+                logger.info("slave %d: read %dB from holdReg address 0 -> %s" %
+                            (slave, max(1 + num_out, 2), _reg))
+
+                # Check if the response length is valid
+                if len(_reg) < 1:
+                    logger.error("Response length is invalid %d" % len(_reg))
+                    if timeout_modbus is not None:
+                        self.client.set_timeout(self._timeout_modbus)            
+                    raise ModbusInvalidResponseError("Response length is invalid %d" % len(_reg))
+
+                # exit loop if command is completed (reg[0] bit15 = 0)
+                _return = _reg[0]
+                if _return & 0x8000 == 0:
+                    break
+
+            # check for read timeout
+            except (modbus.ModbusError, ModbusInvalidResponseError, BaseException) as _err:
+                if type(_err) == modbus.ModbusError:
+                    _err = ModbusStatus(_err.get_exception_code()).name
+                if time.time() - _start_time < _timeout_command:
+                    logger.warning("Command response failed (%s), retry" % str(_err))
+                    time.sleep(0.05)  # Short delay before retrying
+                else:
+                    _msg = "%s(): Command response timeout after %1.1fs (%s), abort" % \
+                        (inspect.stack()[0].function, (time.time()-_start_time), str(_err))
+                    logger.error(_msg)
+                    if timeout_modbus is not None:
+                        self.client.set_timeout(self._timeout_modbus)            
+                    raise ModbusControlError(_msg)
+
+
+        # Check for high-level error: reg[0] bit14 = 1, error code in reg[1]
+        if _return & 0x4000 != 0:
+            if len(_reg) < 2:
+                logger.error("Expected error code in response but response length is too short, abort")
+                if timeout_modbus is not None:
+                    self.client.set_timeout(self._timeout_modbus)            
+                raise ModbusControlError("Response too short to contain error code, abort")
+            _err = _reg[1]
+            if _err > 2 ** 15:  # Convert to uint16_t to int16_t
+                _err = -(2 ** 16 - _err)
+            msg = "_execute_command() failed with error (%s), abort" % ModbusControlStatus(_err)
+            logger.error(msg)
             if timeout_modbus is not None:
-                self.client.set_timeout(self._timeout_modbus)
+                self.client.set_timeout(self._timeout_modbus)            
+            raise ModbusControlError(msg)
 
-            # No error -> return success and read parameters (starts at reg[1])
-            return {"values": _reg[1:1 + num_out]}
-
-        # Handle low-level Modbus error returns
-        except modbus.ModbusError as _err:
-            _error_code = _err.get_exception_code()
-            logger.error(ModbusStatus(_error_code))
-            raise ModbusControlError(ModbusStatus(_error_code))
-        except BaseException as _err:
-            logger.error(str(_err))
-            raise ModbusControlError(str(_err))
-
-        # Restore Modbus timeout before leaving function
-        finally:
-            if timeout_modbus is not None:
-                self.client.set_timeout(self._timeout_modbus)
+        # Restore Modbus timeout
+        if timeout_modbus is not None:
+            self.client.set_timeout(self._timeout_modbus)
+        
+        # No error -> return success and read parameters (starts at reg[1])
+        return {"values": _reg[1:1 + num_out]}
 
 
     #########
@@ -406,8 +444,8 @@ if __name__ == "__main__":
     if platform.system() == "Windows":
         parser.add_argument('-p', '--port', type=str, help='port name', required=False, default='COM3')
     else:
-        parser.add_argument('-p', '--port', type=str, help='port name', required=False, default='/dev/ttyUSB0')
-        # parser.add_argument('-p', '--port', type=str, help='port name', required=False, default='/dev/ttyACM0')
+        # parser.add_argument('-p', '--port', type=str, help='port name', required=False, default='/dev/ttyUSB0')
+        parser.add_argument('-p', '--port', type=str, help='port name', required=False, default='/dev/ttyACM0')
     parser.add_argument('-b', '--baud', type=int, help='baud', required=False, default=115200)
     parser.add_argument('-i', '--id', type=int, help='slave ID', required=False, default=1)
     args = parser.parse_args()
@@ -417,7 +455,7 @@ if __name__ == "__main__":
     logger = logging.getLogger(__name__)
 
     # connect to the Modbus client
-    client = BaseClient(port=args.port, baud=args.baud, timeout_modbus=0.2)
+    client = BaseClient(port=args.port, baud=args.baud)
 
     # avoid USB communication while Arduino is still in bootloader
     print("wait for Arduino bootloader ... ", end="", flush=True)
