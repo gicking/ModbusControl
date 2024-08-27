@@ -57,7 +57,7 @@ class Client(ModbusControl.BaseClient):
     # ModbusControl client input register addresses (only read, no command trigger)
     # Note: address 0 is reserved for ModbusControl protocol version
     MODBUS_ADDR_VERSION = 1             # Modbus input register address: client firmware version
-    MODBUS_ADDR_MILLIS = 2              # Modbus input register address: time [ms]
+    MODBUS_ADDR_UPTIME  = 2             # Modbus input register address: time [ms]
 
     # ModbusControl client commands
     # Note: bit 15 must be 1 (=command pending flag), bit 14 must be cleared (=error flag)
@@ -65,6 +65,7 @@ class Client(ModbusControl.BaseClient):
     MODBUS_CMD_GET_PIN          = 0x8002        # Remote command: corresponds to digitalRead(pin)
     MODBUS_CMD_DELAY            = 0x8003        # Remote command: corresponds to delay(ms)
     MODBUS_CMD_DELAY_NOSERIAL   = 0x8004        # Remote command: corresponds to delay() w/o UART buffering
+    MODBUS_CMD_TEST             = 0xBFFF        # Remote command: dummy test command
 
 
     #########
@@ -126,7 +127,7 @@ class Client(ModbusControl.BaseClient):
         """
         _address = Client.MODBUS_ADDR_VERSION
         _num_out = 1
-        _status = self.read_values(slave=slave, address=_address, num_out=_num_out)
+        _status = self.read_input_register(slave=slave, address=_address, num_out=_num_out)
         logger.info("%s(): slave %d: read %dB from inputReg address %d -> %s" %
                     (inspect.stack()[0].function, slave, _num_out, _address, str(_status)))
         _major = int(_status["values"][0]/10)
@@ -157,9 +158,9 @@ class Client(ModbusControl.BaseClient):
         >>> device = example.Client(port="COM6", baud=115200)
         >>> print(device.read_uptime()["millis"])
         """
-        _address = Client.MODBUS_ADDR_MILLIS
+        _address = Client.MODBUS_ADDR_UPTIME
         _num_out = 1
-        _status = self.read_values(slave=slave, address=_address, num_out=_num_out)
+        _status = self.read_input_register(slave=slave, address=_address, num_out=_num_out)
         logger.info("%s(): slave %d: read %dB from inputReg address %d -> %s" %
                     (inspect.stack()[0].function, slave, _num_out, _address, str(_status)))
         return {"millis": _status["values"][0]}
@@ -253,7 +254,7 @@ class Client(ModbusControl.BaseClient):
         """
         # set appropriate modbus and command timeout [s]
         _timeout_modbus = millis / 1000 + 0.01
-        _timeout_command = millis / 1000 + 0.1
+        _timeout_command = millis / 1000 + 0.2
 
         # execute command
         _status = self.execute_command(slave=slave, command=Client.MODBUS_CMD_DELAY, timeout_modbus=_timeout_modbus,
@@ -331,9 +332,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.ERROR)
     logger = logging.getLogger(__name__)
 
-    ########
     # connect to the Modbus client
-    ########
     client = Client(port=args.port, baud=args.baud, timeout_modbus=0.1)
 
     # avoid USB communication while Arduino is still in bootloader
@@ -341,14 +340,10 @@ if __name__ == "__main__":
     time.sleep(2.5)
     print("done")
 
-    ########
     # assert ModbusControl protocol version. Exit on failure
-    ########
     client.check_protocol_version(slave=args.id)
 
-    ########
     # read client firmware version
-    ########
     version = client.read_version(slave=args.id)["version"]
     print("client ID=%d SW version v%d.%d\n" % (args.id, version["major"], version["minor"]))
 
@@ -360,49 +355,35 @@ if __name__ == "__main__":
     time_start = time.time()    # [s]
     while True:
 
-        ########
         # print PC runtime [s]
-        ########
         time_curr = time.time()
         print("runtime %1.1f s" % (time_curr - time_start))
 
-        ########
         # get client uptime (impacted if ISR disabled) [ms]
-        ########
         millis = client.read_uptime(slave=args.id)["millis"]
         print("slave uptime %1.1f s" % (millis * 0.001))
 
-        ########
         # toggle LED pin (=13)
-        ########
         output_pin = 13
         client.set_pin(slave=args.id, pin=output_pin, state=int(output_state))
         print("set pin %d : %d" % (output_pin, output_state))
         output_state = not output_state
 
-        ########
         # read state of pin 8
-        ########
         input_pin = 8
         input_state = client.read_pin(slave=args.id, pin=input_pin)["state"]
         print("read pin %d : %d" % (input_pin, input_state))
 
-        ########
         # wait some time (with serial interrupts)
-        ########
         pause = 1000  # ms
         print("delay %1.1fs with serial interrupts" % (pause / 1000.0))
         client.delay(slave=args.id, millis=pause)
 
-        ########
         # wait some time (without serial interrupts)
-        ########
         pause = 1000  # ms
         print("delay %1.1fs without serial interrupts" % (pause / 1000.0))
         client.delay_no_serial(slave=args.id, millis=pause)
 
-        ########
         # indicate new loop
-        ########
         sys.stdout.write("\n")
         sys.stdout.flush()

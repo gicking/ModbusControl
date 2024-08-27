@@ -54,24 +54,22 @@
 
 // number of Modbus input and holding registers
 #define MODBUS_NUM_INPUT_REG          3                         //!< number of Modbus input registers. Only virtual [16b]
-#define MODBUS_NUM_HOLD_REG           10                        //!< number of Modbus holding registers. Actual registers [16b]
+#define MODBUS_NUM_HOLD_REG           100                       //!< number of Modbus holding registers. Actual registers [16b]
 
 // Modbus input registers addresses. Note: address 0 is reserved for Modbus protocol version
 #define MODBUS_ADDR_VERSION           1                         //!< Modbus input register address: software version
-#define MODBUS_ADDR_MILLIS            2                         //!< Modbus input register address: time [ms]
+#define MODBUS_ADDR_UPTIME            2                         //!< Modbus input register address: time [ms]
 
 // High-level command codes. Bit 15 must be 1 (=command pending flag), bit 14 must be cleard (=error flag)
 #define MODBUS_CMD_SET_PIN            0x8001                    //!< Remote command: corresponds to digitalWrite()
 #define MODBUS_CMD_GET_PIN            0x8002                    //!< Remote command: corresponds to digitalRead()
 #define MODBUS_CMD_DELAY              0x8003                    //!< Remote command: corresponds to delay()
 #define MODBUS_CMD_DELAY_NOSERIAL     0x8004                    //!< Remote command: corresponds to delay() w/o UART buffering
+#define MODBUS_CMD_TEST               0xBFFF                    //!< Remote command: dummy test command
 
 // ModbusControl error codes. Stored in holdReg[1] in case of an error
 #define MODBUS_ERROR_ILLEGAL_CMD      -1                        //!< Error code: command not supported
 #define MODBUS_ERROR_ILLEGAL_PARAM    -2                        //!< Error code: illegal parameter value / range
-
-// misc macros
-//#define PIN_DEBUG                     7                         //!< optional pin to indicate command execution. Comment out for none
 
 
 /*-----------------------------------------------------------------------------
@@ -104,14 +102,41 @@ uint8_t writeHoldingRegs(uint8_t fc, uint16_t address, uint16_t length)
   // avoid compiler warnings
   (void) fc;
   
-  // address range check. Starting address must be 0 (=command code)
-  if ((address != 0) || ((address + length) > MODBUS_NUM_HOLD_REG))
-    return STATUS_ILLEGAL_DATA_ADDRESS;
+  // optional debug output
+  #if defined(DEBUG_SERIAL) && defined(DEBUG_WRITE_HOLDING_REGISTER)
+    DEBUG_SERIAL.println("writeHoldingRegs():");
+  #endif
 
-  // copy data to global array. Command is triggered by high-level handler
+  // loop over data to write
   for (uint16_t i=0; i<length; i++)
+  {
+    // check address range
+    if ((address+i) > (MODBUS_NUM_HOLD_REG-1))
+    {
+      // optional debug output
+      #if defined(DEBUG_SERIAL) && defined(DEBUG_WRITE_HOLDING_REGISTER)
+        DEBUG_SERIAL.print("  Error: illegal address ");
+        DEBUG_SERIAL.println((int) (address+i));
+      #endif
+
+      // return error code
+      return STATUS_ILLEGAL_DATA_ADDRESS;
+
+    } // illegal address
+
+    // copy data from Modbus buffer to holding register
     regModbus[address+i] = modbus_slave.readRegisterFromBuffer(i);
-  
+    
+    // optional debug output
+    #if defined(DEBUG_SERIAL) && defined(DEBUG_WRITE_HOLDING_REGISTER)
+      DEBUG_SERIAL.print("  ");
+      DEBUG_SERIAL.print((int) (address+i));
+      DEBUG_SERIAL.print("\t0x");
+      DEBUG_SERIAL.println(regModbus[address+i], HEX);
+    #endif
+
+  } // loop over data
+
   // return ok
   return STATUS_OK;
   
@@ -129,14 +154,41 @@ uint8_t readHoldingRegs(uint8_t fc, uint16_t address, uint16_t length)
   // avoid compiler warnings
   (void) fc;
   
-  // address range check. Starting address must be 0 (=command code)
-  if ((address != 0) || ((address + length) > MODBUS_NUM_HOLD_REG))
-    return STATUS_ILLEGAL_DATA_ADDRESS;
+  // optional debug output
+  #if defined(DEBUG_SERIAL) && defined(DEBUG_READ_HOLDING_REGISTER)
+    DEBUG_SERIAL.println("readHoldingRegs():");
+  #endif
 
-  // copy data from global array to Modbus buffer.
+  // loop over data to read
   for (uint16_t i=0; i<length; i++)
+  {
+    // check address range
+    if ((address+i) > (MODBUS_NUM_HOLD_REG-1))
+    {
+      // optional debug output
+      #if defined(DEBUG_SERIAL) && defined(DEBUG_READ_HOLDING_REGISTER)
+        DEBUG_SERIAL.print("  Error: illegal address ");
+        DEBUG_SERIAL.println((int) (address+i));
+      #endif
+
+      // return error code
+      return STATUS_ILLEGAL_DATA_ADDRESS;
+
+    } // illegal address
+
+    // copy data from holding register to Modbus buffer
     modbus_slave.writeRegisterToBuffer(i, regModbus[address+i]);
-  
+    
+    // optional debug output
+    #if defined(DEBUG_SERIAL) && defined(DEBUG_READ_HOLDING_REGISTER)
+      DEBUG_SERIAL.print("  ");
+      DEBUG_SERIAL.print((int) (address+i));
+      DEBUG_SERIAL.print("\t0x");
+      DEBUG_SERIAL.println(regModbus[address+i], HEX);
+    #endif
+
+  } // loop over data
+
   // return ok
   return STATUS_OK;
   
@@ -153,30 +205,74 @@ uint8_t readInputReg(uint8_t fc, uint16_t address, uint16_t length)
   // avoid compiler warnings
   (void) fc;
   
-  // address range check. Any address within [0; (MODBUS_NUM_INPUT_REG-1)] is allowed
-  if ((address > MODBUS_NUM_INPUT_REG) || ((address + length) > MODBUS_NUM_INPUT_REG))
-    return STATUS_ILLEGAL_DATA_ADDRESS;
+  // optional debug output
+  #if defined(DEBUG_SERIAL) && defined(DEBUG_READ_INPUT_REGISTER)
+    DEBUG_SERIAL.println("readInputReg():");
+  #endif
 
-  // set content of Modbus respective addresses
+  // loop over data to read
   for (uint16_t i=0; i<length; i++)
   {
     // ModbusControl protocol version address. Must not be changed!
     if ((address+i) == MODBUSCONTROL_ADDR_PROTOCOL)
+    {
+      // optional debug output
+      #if defined(DEBUG_SERIAL) && defined(DEBUG_READ_INPUT_REGISTER)
+        DEBUG_SERIAL.print("  protocol version = ");
+        DEBUG_SERIAL.println(MODBUSCONTROL_PROTOCOL);
+      #endif
+
+      // copy data to Modbus buffer
       modbus_slave.writeRegisterToBuffer(i, MODBUSCONTROL_PROTOCOL);
-    
+
+    } // address == MODBUSCONTROL_ADDR_PROTOCOL
+
     ////////////////  add project specific reads here  ////////////////
-    
+
     // firmware version address. May be changed
     else if ((address+i) == MODBUS_ADDR_VERSION)
+    {
+      // optional debug output
+      #if defined(DEBUG_SERIAL) && defined(DEBUG_READ_INPUT_REGISTER)
+        DEBUG_SERIAL.print("  firmware version = ");
+        DEBUG_SERIAL.println(SW_VERSION);
+      #endif
+
+      // copy data to Modbus buffer
       modbus_slave.writeRegisterToBuffer(i, SW_VERSION);
+
+    } // address == MODBUS_ADDR_VERSION
     
+
     // uptime / millis() address. May be changed
-    else if ((address+i) == MODBUS_ADDR_MILLIS)
+    else if ((address+i) == MODBUS_ADDR_UPTIME)
+    {
+      // optional debug output
+      #if defined(DEBUG_SERIAL) && defined(DEBUG_READ_INPUT_REGISTER)
+        DEBUG_SERIAL.print("  uptime = ");
+        DEBUG_SERIAL.print((int) (millis()));
+        DEBUG_SERIAL.println("ms");
+      #endif
+
+      // copy data to Modbus buffer
       modbus_slave.writeRegisterToBuffer(i, (uint16_t) (millis()));
+
+    } // address == MODBUS_ADDR_UPTIME
+    
     
     // address not mapped -> error
     else
+    {
+      // optional debug output
+      #if defined(DEBUG_SERIAL) && defined(DEBUG_READ_INPUT_REGISTER)
+        DEBUG_SERIAL.print("  Error: illegal address ");
+        DEBUG_SERIAL.println((int) (address+i));
+      #endif
+
+      // return error
       return STATUS_ILLEGAL_DATA_ADDRESS;
+
+    } // illegal address
       
   } // loop i over address
 
@@ -192,6 +288,11 @@ uint8_t readInputReg(uint8_t fc, uint16_t address, uint16_t length)
 **********/
 void init_ModbusControl()
 {
+  // optional debug output
+  #if defined(DEBUG_SERIAL)
+    DEBUG_SERIAL.print("initialize ModbusControl ... ");
+  #endif
+
   // initialize Modbus holding registers
   for (uint16_t i=0; i<MODBUS_NUM_HOLD_REG; i++)
     regModbus[i] = 0;
@@ -211,6 +312,11 @@ void init_ModbusControl()
     pinMode(PIN_DEBUG, OUTPUT); 
   #endif // PIN_DEBUG
 
+  // optional debug output
+  #if defined(DEBUG_SERIAL)
+    DEBUG_SERIAL.println("done");
+  #endif
+
 } // setup()
 
 
@@ -223,7 +329,9 @@ void init_ModbusControl()
 **********/
 void handle_ModbusControl(void)
 {
-  uint16_t  *cmd  = &(regModbus[0]);      // for convenience
+  // for convenience
+  uint16_t  *cmd  = &(regModbus[0]);      // pointer to command register
+  uint16_t  *data = &(regModbus[1]);      // pointer to data array
   
   // handle Modbus low-level protocol
   modbus_slave.poll();
@@ -231,23 +339,38 @@ void handle_ModbusControl(void)
   // command received (bit 15 in regModbus[0] == 1)
   if ((*cmd) & 0x8000) {
 
+    // execute command
     switch (*cmd) {
 
       //////
       // set pin:
-      //  in:  reg[1]=pin, reg[2]=state
+      //  in:  data[0]=pin, data[1]=state
       //  out: none
       //////
       case MODBUS_CMD_SET_PIN:
 
-        // range check: allow only pin 13 (=LED) for example
-        if (regModbus[1] != 13)
+        // optional debug output
+        #if defined(DEBUG_SERIAL) && defined(DEBUG_EXECUTE_COMMAND)
+          DEBUG_SERIAL.print("handle_ModbusControl(): set pin ");
+          DEBUG_SERIAL.print((int) data[0]);
+          DEBUG_SERIAL.print("=");
+          DEBUG_SERIAL.print((int) data[1]);
+          DEBUG_SERIAL.print(" ... ");
+        #endif
+
+        // optional range check: allow only pin 13 (=LED) for example
+        if (data[0] != 13)
         {
+          // optional debug output
+          #if defined(DEBUG_SERIAL) && defined(DEBUG_EXECUTE_COMMAND)
+            DEBUG_SERIAL.println("Error: pin out of range");
+          #endif
+
           // set error indication (=bit 14) in regModbus[0]
           (*cmd) |= 0x4000;
           
           // set error code in regModbus[1]
-          regModbus[1] = MODBUS_ERROR_ILLEGAL_PARAM;
+          data[0] = MODBUS_ERROR_ILLEGAL_PARAM;
 
           // exit switch
           break;
@@ -255,27 +378,44 @@ void handle_ModbusControl(void)
         } // parameter check
 
         // execute command. Note order to avoid glitches
-        digitalWrite(regModbus[1], regModbus[2]);
-        pinMode(regModbus[1], OUTPUT);
+        digitalWrite(data[0], data[1]);
+        pinMode(data[0], OUTPUT);
+
+        // optional debug output
+        #if defined(DEBUG_SERIAL) && defined(DEBUG_EXECUTE_COMMAND)
+          DEBUG_SERIAL.println("done");
+        #endif
         
         break; // MODBUS_CMD_SET_PIN
 
       
       //////
       // read pin:
-      //  in:  reg[1]=pin
-      //  out: reg[2]=state
+      //  in:  data[0]=pin
+      //  out: data[1]=state
       //////
       case MODBUS_CMD_GET_PIN:
 
-        // range check: allow als pins except pin 13 (=LED) for example
-        if (regModbus[1] == 13)
+        // optional debug output
+        #if defined(DEBUG_SERIAL) && defined(DEBUG_EXECUTE_COMMAND)
+          DEBUG_SERIAL.print("handle_ModbusControl(): get pin ");
+          DEBUG_SERIAL.print((int) data[0]);
+          DEBUG_SERIAL.print(" ... ");
+        #endif
+
+        // optional range check: allow als pins except pin 13 (=LED) for example
+        if (data[0] == 13)
         {
+          // optional debug output
+          #if defined(DEBUG_SERIAL) && defined(DEBUG_EXECUTE_COMMAND)
+            DEBUG_SERIAL.println("Error: pin out of range");
+          #endif
+
           // set error indication (=bit 14) in regModbus[0]
           (*cmd) |= 0x4000;
           
           // set error code in regModbus[1]
-          regModbus[1] = MODBUS_ERROR_ILLEGAL_PARAM;
+          data[0] = MODBUS_ERROR_ILLEGAL_PARAM;
 
           // exit switch
           break;
@@ -283,8 +423,16 @@ void handle_ModbusControl(void)
         } // parameter check
 
         // execute command
-        pinMode(regModbus[1], INPUT_PULLUP);
-        regModbus[2] = digitalRead(regModbus[1]);
+        pinMode(data[0], INPUT_PULLUP);
+        data[1] = digitalRead(data[0]);
+
+        // optional debug output
+        #if defined(DEBUG_SERIAL) && defined(DEBUG_EXECUTE_COMMAND)
+          if (data[1] == 0)
+            DEBUG_SERIAL.println("state=LOW");
+          else
+            DEBUG_SERIAL.println("state=HIGH");
+        #endif
         
         break; // MODBUS_CMD_GET_PIN
 
@@ -296,8 +444,20 @@ void handle_ModbusControl(void)
       //////
       case MODBUS_CMD_DELAY:
 
+        // optional debug output
+        #if defined(DEBUG_SERIAL) && defined(DEBUG_EXECUTE_COMMAND)
+          DEBUG_SERIAL.print("handle_ModbusControl(): delay ");
+          DEBUG_SERIAL.print((int) data[0]);
+          DEBUG_SERIAL.print("ms ... ");
+        #endif
+
         // execute command
-        delay(regModbus[1]);
+        delay(data[0]);
+
+        // optional debug output
+        #if defined(DEBUG_SERIAL) && defined(DEBUG_EXECUTE_COMMAND)
+          DEBUG_SERIAL.println("done");
+        #endif
         
         break; // MODBUS_CMD_DELAY
 
@@ -309,29 +469,69 @@ void handle_ModbusControl(void)
       //////
       case MODBUS_CMD_DELAY_NOSERIAL:
 
+        // optional debug output
+        #if defined(DEBUG_SERIAL) && defined(DEBUG_EXECUTE_COMMAND)
+          DEBUG_SERIAL.print("handle_ModbusControl(): delay w/o serial ");
+          DEBUG_SERIAL.print((int) data[0]);
+          DEBUG_SERIAL.print("ms ... ");
+        #endif
+
         // disable Modbus interface
         MODBUS_SERIAL.end();
         
         // execute command
-        delay(regModbus[1]);
+        delay(data[0]);
 
         // re-enable Modbus interface
         MODBUS_SERIAL.begin(MODBUS_BAUDRATE);
         while(!MODBUS_SERIAL);
+
+        // optional debug output
+        #if defined(DEBUG_SERIAL) && defined(DEBUG_EXECUTE_COMMAND)
+          DEBUG_SERIAL.println("done");
+        #endif
         
         break; // MODBUS_CMD_DELAY_NO_SERIAL
+  
       
+      //////
+      // dummy test command
+      //  in:  reg[1..N]
+      //  out: reg[1..N]
+      //////
+      case MODBUS_CMD_TEST:
+
+        // optional debug output
+        #if defined(DEBUG_SERIAL) && defined(DEBUG_EXECUTE_COMMAND)
+          DEBUG_SERIAL.print("handle_ModbusControl(): test command ... ");
+        #endif
+
+        // add test code here
+
+        // optional debug output
+        #if defined(DEBUG_SERIAL) && defined(DEBUG_EXECUTE_COMMAND)
+          DEBUG_SERIAL.println("done");
+        #endif
+        
+        break; // MODBUS_CMD_TEST
+    
       
       //////
       // unknown command. Don't change!
       //////
       default:
+
+        // optional debug output
+        #if defined(DEBUG_SERIAL) && defined(DEBUG_EXECUTE_COMMAND)
+          DEBUG_SERIAL.print("handle_ModbusControl(): Error, illegal command code 0x");
+          DEBUG_SERIAL.println((*cmd), HEX);
+        #endif
       
         // set error indication (=bit 14) in regModbus[0]
         (*cmd) |= 0x4000;
         
         // set error code in regModbus[1]
-        regModbus[1] = MODBUS_ERROR_ILLEGAL_CMD;
+        data[0] = MODBUS_ERROR_ILLEGAL_CMD;
         
     } // switch (cmd)
 
