@@ -117,7 +117,7 @@ class Client(ModbusControl.BaseClient):
         Returns
         -------
         dict
-            version: {"major": major, "minor": minor}
+            version: {"version": x.y, "major": x, "minor": y}
 
         Examples
         --------
@@ -132,7 +132,7 @@ class Client(ModbusControl.BaseClient):
                     (inspect.stack()[0].function, slave, _num_out, _address, str(_status)))
         _major = int(_status["values"][0]/10)
         _minor = _status["values"][0] - 10 * _major
-        return {"version": {"major": _major, "minor": _minor}}
+        return {"version": {"version": _major + _minor / 10, "major": _major, "minor": _minor}}
 
 
     #########
@@ -336,7 +336,7 @@ if __name__ == "__main__":
     client = Client(port=args.port, baud=args.baud, timeout_modbus=0.1)
 
     # avoid USB communication while Arduino is still in bootloader
-    print("wait for Arduino bootloader ... ", end="", flush=True)
+    print("wait for bootloader ... ", end="", flush=True)
     time.sleep(2.5)
     print("done")
 
@@ -345,7 +345,7 @@ if __name__ == "__main__":
 
     # read client firmware version
     version = client.read_version(slave=args.id)["version"]
-    print("client ID=%d SW version v%d.%d\n" % (args.id, version["major"], version["minor"]))
+    print("client ID=%d SW version v%.1f\n" % (args.id, version["version"]))
 
 
     ########
@@ -370,20 +370,26 @@ if __name__ == "__main__":
         output_state = not output_state
 
         # read state of pin 8
-        input_pin = 8
+        input_pin = None
+        if version["version"] == 1.2:
+            input_pin = 8       # Arduino (FW v1.2)
+        else:
+            input_pin = 9       # Nucleo-L432KC (FW v1.3)
         input_state = client.read_pin(slave=args.id, pin=input_pin)["state"]
         print("read pin %d : %d" % (input_pin, input_state))
 
         # wait some time (with serial interrupts)
-        pause = 1000  # ms
+        pause = 100  # ms
         print("delay %1.1fs with serial interrupts" % (pause / 1000.0))
         client.delay(slave=args.id, millis=pause)
 
-        # wait some time (without serial interrupts)
-        pause = 1000  # ms
+        # wait some time (without serial interrupts) for real-time tasks. Note: can cause timeout if Modbus timeout is too small
+        """
+        pause = 100  # ms
         print("delay %1.1fs without serial interrupts" % (pause / 1000.0))
         client.delay_no_serial(slave=args.id, millis=pause)
-
+        """
+        
         # indicate new loop
         sys.stdout.write("\n")
         sys.stdout.flush()

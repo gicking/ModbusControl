@@ -593,7 +593,7 @@ if __name__ == "__main__":
         parser.add_argument('-p', '--port', type=str, help='port name', required=False, default='COM3')
     else:
         parser.add_argument('-p', '--port', type=str, help='port name', required=False, default='/dev/ttyUSB0')
-        # parser.add_argument('-p', '--port', type=str, help='port name', required=False, default='/dev/ttyACM0')
+        #parser.add_argument('-p', '--port', type=str, help='port name', required=False, default='/dev/ttyACM0')
     parser.add_argument('-b', '--baud', type=int, help='baud', required=False, default=115200)
     parser.add_argument('-i', '--id', type=int, help='slave ID', required=False, default=1)
     args = parser.parse_args()

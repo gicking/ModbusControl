@@ -1,8 +1,10 @@
 /*************************
 
-  Example for remote controlling an Arduino via USB and ModbusControl from PC.
+  Example for remote controlling an Nucleo-L432KC via USB/ST-Link and ModbusControl from PC.
 
 *************************/
+#include <Arduino.h>
+#include "ModbusControl.h"
 
 /**********
   initialize

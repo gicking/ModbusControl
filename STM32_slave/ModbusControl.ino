@@ -1,6 +1,6 @@
 /*************************
 
-  Arduino remote control via USB and Modbus RTU protocol 
+  Nucleo-L432KC remote control via via USB/ST-Link and Modbus RTU protocol 
 
   For Modbus low-level protocol see https://en.wikipedia.org/wiki/Modbus
 
@@ -42,7 +42,7 @@
 -----------------------------------------------------------------------------*/
 
 // misc constants
-#define SW_VERSION                    12                        //!< dummy software version x.x -> 1.2
+#define SW_VERSION                    13                        //!< dummy software version x.x -> 1.3
 
 // General Modbus parameters
 #define MODBUS_SERIAL                 Serial                    //!< Serial interface used for Modbus

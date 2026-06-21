@@ -34,6 +34,7 @@
     INCLUDES
 -----------------------------------------------------------------------------*/
 
+#include <Arduino.h>
 #include <ModbusSlave.h>      // Modbus RTU slave library from https://github.com/yaacov/ArduinoModbusSlave
 
 
@@ -42,7 +43,7 @@
 -----------------------------------------------------------------------------*/
 
 // misc constants
-#define SW_VERSION                    12                        //!< dummy software version x.x -> 1.2
+#define SW_VERSION                    13                        //!< dummy software version x.x -> 1.3
 
 // General Modbus parameters
 #define MODBUS_SERIAL                 Serial                    //!< Serial interface used for Modbus
@@ -50,10 +51,8 @@
 #define MODBUS_BAUDRATE               115200                    //!< Modbus communication speed [Baud]
 #define MODBUS_ID                     1                         //!< Modbus slave ID
 
-// debug console. Use either HW or SW serial interface
+// debug console. Use HW-Serial1 interface via Tx1=D1=PA9; Rx1=D0=PA10
 //#define MODBUS_DEBUG_SERIAL         Serial1                   //!< serial interface for debug output. Comment out for no debug
-//#define MODBUS_DEBUG_PIN_RX         6                         //!< SoftwareSerial Rx pin. Only relevant if DEBUG_SERIAL is defined. If defined, overwrite DEBUG_SERIAL with SoftwareSerial
-//#define MODBUS_DEBUG_PIN_TX         7                         //!< SoftwareSerial Tx pin. Only relevant if DEBUG_SERIAL is defined
 #define MODBUS_DEBUG_BAUDRATE         115200                    //!< baudrate for debug output. Only relevant if DEBUG_SERIAL is defined
 #define MODBUS_DEBUG_WRITE_HOLDING_REGISTER                     //!< print debug output for writeHoldingRegs()
 #define MODBUS_DEBUG_READ_HOLDING_REGISTER                      //!< print debug output for readHoldingRegs()
@@ -96,13 +95,6 @@ uint16_t  regModbus[MODBUS_NUM_HOLD_REG];
 
 // Modbus RTU slave instance
 Modbus    modbus_slave(MODBUS_SERIAL, MODBUS_ID, MODBUS_RS485_CTRL_PIN);
-
-/// if use SoftwareSerial, redefine debug console
-#if defined(MODBUS_DEBUG_SERIAL) && defined(MODBUS_DEBUG_PIN_RX) && defined(MODBUS_DEBUG_PIN_TX)
-  SoftwareSerial sw_serial(MODBUS_DEBUG_PIN_RX, MODBUS_DEBUG_PIN_TX);
-  #undef  DEBUG_SERIAL
-  #define DEBUG_SERIAL sw_serial
-#endif
 
 
 /*-----------------------------------------------------------------------------
@@ -450,7 +442,7 @@ void handle_ModbusControl(void)
         // execute command
         pinMode(data[0], INPUT_PULLUP);
         data[1] = digitalRead(data[0]);
-
+        
         // optional debug output
         #if defined(MODBUS_DEBUG_SERIAL) && defined(MODBUS_DEBUG_DEBUG_EXECUTE_COMMAND)
           if (data[1] == 0)
